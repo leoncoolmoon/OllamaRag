@@ -1,0 +1,14 @@
+faiss-cpu==1.11.0
+langchain==0.2.4
+langchain-community==0.2.4
+langchain-core==0.2.6
+langchain-huggingface==0.0.3
+langchain-text-splitters==0.2.1
+PyPDF2==3.0.1
+tkhtmlview==0.3.1
+torch==2.7.0
+torchaudio==2.7.0
+torchvision==0.22.0
+markdown==3.8
+requests==2.32.0  # 用于调用LM Studio的HTTP API
+openai==1.12.0    # 使用OpenAI兼容模式（LM Studio支持）
