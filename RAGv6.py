@@ -4,33 +4,27 @@ import os
 import json
 import re
 import tkinter as tk
-from tkinter import ttk, filedialog, scrolledtext, messagebox
-from PyPDF2 import PdfReader
-from PyPDF2.errors import PdfReadError
-#from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.chains import RetrievalQA
-from langchain_core.documents import Document  # 添加到文件顶部的导入部分
-from langchain.llms.base import LLM
-from threading import Thread
-import queue
-import subprocess
-#import warnings
-#import markdown
-#from tkhtmlview import HTMLLabel
-from datetime import datetime
 import webbrowser
 import requests
 import json
-from typing import Any, Dict, List, Optional, Union, Sequence, Literal
-from dataclasses import dataclass
-from langchain.callbacks.manager import CallbackManagerForLLMRun
-#from langchain.schema import LLMResult
-from langchain_community.llms import Ollama
-from pydantic import Field
+import queue
+import subprocess
+from tkinter import ttk, filedialog, scrolledtext, messagebox
+from PyPDF2 import PdfReader
+from PyPDF2.errors import PdfReadError
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.chains import RetrievalQA
+from langchain.llms.base import LLM
 from langchain.prompts import PromptTemplate
+from langchain.callbacks.manager import CallbackManagerForLLMRun
+from langchain_community.vectorstores import FAISS
+from langchain_community.llms import Ollama
+from langchain_core.documents import Document  # 添加到文件顶部的导入部分
+from langchain_huggingface import HuggingFaceEmbeddings
+from threading import Thread
+from datetime import datetime
+from typing import Any, List, Optional, Literal
+from pydantic import Field
 
 
 class WorkingOpenAILLM(LLM):
@@ -345,7 +339,8 @@ class PDFRAGApp:
         self.qa_chain = None
         self.individual_vectorstores = {}
         self.conversation_history = []
-        
+        self.check_var = tk.BooleanVar()
+
         # 模型相关
         self.ollama_models = self.get_local_ollama_models()
         self.model_var = tk.StringVar(value=self.ollama_models[0] if self.ollama_models else "llama2")
@@ -453,6 +448,218 @@ class PDFRAGApp:
             self.message_queue.put(("error", error_msg))
             self.message_queue.put(("enable_button", "add_btn"))
 
+    def process_single_pdf(self, pdf_path):
+        """处理单个PDF文件并创建其单独的向量库
+        
+        Args:
+            pdf_path (str): PDF文件的完整路径
+            
+        Returns:
+            bool: 处理是否成功
+        """
+        try:
+            # 计算文件哈希
+            file_hash = self.calculate_file_hash(pdf_path)
+            
+            # 检查是否已经处理过且未修改
+            if pdf_path in self.file_hashes and self.file_hashes[pdf_path] == file_hash:
+                if pdf_path in self.individual_vectorstores:
+                    print(f"文件未修改，使用缓存: {pdf_path}")
+                    return True
+                # 否则需要重新处理
+                
+            # 读取PDF内容
+            reader = PdfReader(pdf_path)
+            documents = []
+            for  page_num, page in enumerate(reader.pages):
+                text = page.extract_text()
+                if text:
+                    documents.append(Document(
+                        page_content=text,
+                        metadata={"source": pdf_path, "page": page_num}
+                    ))
+                    print (page_num)
+            
+            if not documents:
+                self.failed_files[pdf_path] = "无法提取文本内容"
+                print(f"无法提取文本内容: {pdf_path}")
+                return False
+            
+            # 分割文本
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+                separators=["\n\n", "\n", " ", ""]
+            )
+            # chunks = text_splitter.split_text("\n".join(file_text))
+            split_docs = text_splitter.split_documents(documents)
+
+            
+            if not split_docs:
+                self.failed_files[pdf_path] = "文本分割后无有效内容"
+                print(f"文本分割后无有效内容: {pdf_path}")
+                return False
+            
+            # 创建嵌入模型
+            embeddings = HuggingFaceEmbeddings(
+                model_name="sentence-transformers/all-mpnet-base-v2",
+                model_kwargs={'device': self.get_device()},
+                encode_kwargs={
+                    'batch_size': 32,
+                    'device': self.get_device(),
+                    'normalize_embeddings': True
+                }
+            )
+            
+            # 为当前PDF创建单独的向量库
+            # vectorstore = FAISS.from_texts(chunks, embeddings)
+            vectorstore = FAISS.from_documents(
+                split_docs,  # 使用Document对象而非纯文本
+                embeddings
+            )
+            # 保存到单独向量库字典
+            self.individual_vectorstores[pdf_path] = vectorstore
+            
+            # 更新文件哈希记录
+            self.file_hashes[pdf_path] = file_hash
+            
+            print(f"成功处理PDF文件: {pdf_path} (生成 {len(documents)} 个文本块)")
+            return True
+            
+        except PdfReadError as e:
+            self.failed_files[pdf_path] = "PDF文件损坏或加密"
+            print(f"PDF读取错误: {pdf_path} - {str(e)}")
+            return False
+        except Exception as e:
+            self.failed_files[pdf_path] = str(e)
+            print(f"处理PDF文件出错: {pdf_path} - {str(e)}")
+            return False
+
+    def import_pdfs(self):
+        folder = self.pdf_folder_var.get()
+        if not folder:
+            self.update_status("请先选择PDF文件夹")
+            return
+        
+        # 清空列表
+        self.pdf_paths = []
+        self.pdf_list.delete(0, tk.END)
+        self.success_files = []
+        self.failed_files = {}
+        
+        # 禁用按钮防止重复点击
+        self.import_btn.config(state=tk.DISABLED)
+        self.browse_btn.config(state=tk.DISABLED)
+        self.update_status("正在扫描PDF文件...")
+        
+        # 在新线程中处理PDF
+        Thread(target=self.process_pdfs, args=(folder,), daemon=True).start()
+    
+    def record_pdf_hashes(self):
+        with open(self.hash_db_path, 'w') as f:
+            json.dump(self.file_hashes, f)
+    
+    def process_pdfs(self, folder):
+        try:
+            # 递归扫描所有PDF文件
+            for root, _, files in os.walk(folder):
+                for file in files:
+                    if file.lower().endswith('.pdf'):
+                        full_path = os.path.join(root, file)
+                        if full_path not in self.pdf_paths:
+                            self.pdf_paths.append(full_path)
+                            self.pdf_list.insert(tk.END, file)
+                            self.file_hashes[full_path] = self.calculate_file_hash(full_path)
+            
+            if not self.pdf_paths:
+                self.message_queue.put(("status", "未找到PDF文件"))
+                return
+            
+            self.message_queue.put(("message", f"找到 {len(self.pdf_paths)} 个PDF文件，正在处理..."))
+            
+            
+            # 分割文本
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+                separators=["\n\n", "\n", " ", ""]
+            )
+            
+                
+                
+            # 读取和分割PDF文本
+            documents = []
+           # print(f"[调试] 开始处理 {len(self.pdf_paths)} 个PDF文件")  # 调试语句
+            for pdf_path in self.pdf_paths:
+                print(f"\n 正在处理: {os.path.basename(pdf_path)}:{pdf_path}")  # 显示当前文件名
+                try:
+                    reader = PdfReader(pdf_path)
+                    file_doc = []
+                   # print(f"[调试] 总页数: {len(reader.pages)}")  # 显示PDF页数
+                    for page_num, page in enumerate(reader.pages):
+                        text = page.extract_text()
+                        if text:
+                            file_doc.append(Document(
+                                page_content=text,
+                                metadata={"source": pdf_path, "page": page_num}
+                            ))
+                           # file_doc.append(text)
+                    if file_doc:
+                        split_docs = text_splitter.split_documents(file_doc)
+                        if not split_docs:
+                            self.message_queue.put(("error", "文件分割后无有效内容"))
+                            return
+                        documents.extend(split_docs)
+                        self.success_files.append(pdf_path)
+                        print("成功！")
+                    else:
+                        self.failed_files[pdf_path] = "无法提取文本内容"
+                except PdfReadError as e:
+                    self.failed_files[pdf_path] = "PDF文件损坏或加密"
+                except Exception as e:
+                    self.failed_files[pdf_path] = str(e)
+                    print(f"处理{os.path.basename(pdf_path)}出错: {str(e)}")
+
+            
+            # 在对话中显示处理结果
+            if self.success_files:
+                self.message_queue.put(("status", f"成功导入 {len(self.success_files)} 个PDF文件"))
+            if self.failed_files:
+                self.message_queue.put(("status", f"导入失败 {len(self.failed_files)} 个PDF文件"))
+                for file, reason in self.failed_files.items():
+                    self.message_queue.put(("status", f"失败文件: {os.path.basename(file)} - 原因: {reason}"))
+            print("创建向量存储")
+            # 创建向量存储
+            try:
+                embeddings = HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/all-mpnet-base-v2",
+                    model_kwargs={'device': self.get_device()},
+                    encode_kwargs={
+                        'batch_size': 32,
+                        'device': self.get_device(),
+                        'normalize_embeddings': True
+                    }
+                )
+                
+                # self.vectorstore = FAISS.from_texts(chunks, embeddings)
+                self.vectorstore = FAISS.from_documents(documents, embeddings)
+                self.save_vectorstore(self.vectorstore_path)
+                self.record_pdf_hashes()
+                success_msg = f"完成! 成功导入 {len(self.success_files)}/{len(self.pdf_paths)} 个PDF文件"
+                self.message_queue.put(("status", success_msg))
+                self.message_queue.put(("message", "系统", "RAG系统已准备好回答关于PDF内容的问题"))
+                
+            except Exception as e:
+                error_msg = f"创建向量存储或QA链时出错: {str(e)}"
+                self.message_queue.put(("error", error_msg))
+                
+        except Exception as e:
+            error_msg = f"处理PDF时出错: {str(e)}"
+            self.message_queue.put(("error", error_msg))
+        finally:
+            self.message_queue.put(("enable_buttons", True))
+ 
+
     def remove_pdfs(self):
         """从系统中移除选定的PDF文件
         
@@ -465,7 +672,7 @@ class PDFRAGApp:
         # 获取选中的文件索引（按从后往前顺序处理）
         selected_indices = list(self.pdf_list.curselection())
         if not selected_indices:
-            self.message_queue.put("系统", "请先选择要删除的PDF文件")
+            self.message_queue.put(("系统", "请先选择要删除的PDF文件"))
             return
         
         # 确认对话框
@@ -590,7 +797,7 @@ class PDFRAGApp:
                     elif msg_type == "message":
                         self.message_queue.put(content[0], content[1])
                     elif msg_type == "error":
-                        self.message_queue.put("错误", content[0])
+                        self.message_queue.put(("错误", content[0]))
                     elif msg_type == "enable_buttons":
                         self.import_btn.config(state=tk.NORMAL)
                         self.browse_btn.config(state=tk.NORMAL)
@@ -615,92 +822,6 @@ class PDFRAGApp:
     def update_status(self, message):
         self.status_var.set(message)
     
-    def process_single_pdf(self, pdf_path):
-        """处理单个PDF文件并创建其单独的向量库
-        
-        Args:
-            pdf_path (str): PDF文件的完整路径
-            
-        Returns:
-            bool: 处理是否成功
-        """
-        try:
-            # 计算文件哈希
-            file_hash = self.calculate_file_hash(pdf_path)
-            
-            # 检查是否已经处理过且未修改
-            if pdf_path in self.file_hashes and self.file_hashes[pdf_path] == file_hash:
-                if pdf_path in self.individual_vectorstores:
-                    print(f"文件未修改，使用缓存: {pdf_path}")
-                    return True
-                # 否则需要重新处理
-                
-            # 读取PDF内容
-            reader = PdfReader(pdf_path)
-            documents = []
-            for  page_num, page in enumerate(reader.pages):
-                text = page.extract_text()
-                if text:
-                    documents.append(Document(
-                        page_content=text,
-                        metadata={"source": pdf_path, "page": page_num}
-                    ))
-                    print (page_num)
-            
-            if not documents:
-                self.failed_files[pdf_path] = "无法提取文本内容"
-                print(f"无法提取文本内容: {pdf_path}")
-                return False
-            
-            # 分割文本
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200,
-                separators=["\n\n", "\n", " ", ""]
-            )
-            # chunks = text_splitter.split_text("\n".join(file_text))
-            split_docs = text_splitter.split_documents(documents)
-
-            
-            if not split_docs:
-                self.failed_files[pdf_path] = "文本分割后无有效内容"
-                print(f"文本分割后无有效内容: {pdf_path}")
-                return False
-            
-            # 创建嵌入模型
-            embeddings = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-mpnet-base-v2",
-                model_kwargs={'device': self.get_device()},
-                encode_kwargs={
-                    'batch_size': 32,
-                    'device': self.get_device(),
-                    'normalize_embeddings': True
-                }
-            )
-            
-            # 为当前PDF创建单独的向量库
-            # vectorstore = FAISS.from_texts(chunks, embeddings)
-            vectorstore = FAISS.from_documents(
-                split_docs,  # 使用Document对象而非纯文本
-                embeddings
-            )
-            # 保存到单独向量库字典
-            self.individual_vectorstores[pdf_path] = vectorstore
-            
-            # 更新文件哈希记录
-            self.file_hashes[pdf_path] = file_hash
-            
-            print(f"成功处理PDF文件: {pdf_path} (生成 {len(documents)} 个文本块)")
-            return True
-            
-        except PdfReadError as e:
-            self.failed_files[pdf_path] = "PDF文件损坏或加密"
-            print(f"PDF读取错误: {pdf_path} - {str(e)}")
-            return False
-        except Exception as e:
-            self.failed_files[pdf_path] = str(e)
-            print(f"处理PDF文件出错: {pdf_path} - {str(e)}")
-            return False
 
     def merge_vectorstores(self):
         """合并所有单独的向量库到主向量库"""
@@ -834,8 +955,21 @@ class PDFRAGApp:
         )
         self.conversation.pack(fill=tk.BOTH, expand=True)
 
+        button_panel = ttk.Frame(left_panel)
+        button_panel.pack(fill=tk.X, pady=(5, 0))
+        
+        self.hx_btn = ttk.Checkbutton(
+            button_panel,
+            text="包含之前对话内容",
+            width=25,
+            variable=self.check_var,
+            onvalue=True,
+            offvalue=False
+        )
+        self.hx_btn.pack(side=tk.LEFT, padx=2)
+
         clear_btn = ttk.Button(
-            left_panel,
+            button_panel,
             text="清空对话",
             command=self.clear_conversation,
             width=15
@@ -1040,7 +1174,7 @@ class PDFRAGApp:
                     else:  # Linux
                         subprocess.run(['xdg-open', file_path], check=True)
             except Exception as e:
-                self.message_queue.put("错误", f"无法打开PDF文件: {str(e)}")
+                self.message_queue.put(("错误", f"无法打开PDF文件: {str(e)}"))
 
     def update_temp_slider(self, event=None):
         try:
@@ -1116,7 +1250,7 @@ class PDFRAGApp:
     def send_message(self, event=None):
         #没有向量库
         if not hasattr(self, 'vectorstore') or self.vectorstore is None:
-            self.message_queue.put("message", "请先成功导入PDF文件或加载向量库")
+            self.message_queue.put(("message", "请先成功导入PDF文件或加载向量库"))
             return
 
         user_text = self.user_input.get("1.0", tk.END).strip()
@@ -1127,7 +1261,7 @@ class PDFRAGApp:
         print(self.model_var.get())
         print(self.config_var.get())
         if not self.model_var.get().strip():
-            self.message_queue.put("message", "请先选定模型")
+            self.message_queue.put(("message", "请先选定模型"))
             return
         if not hasattr(self, 'qa_chain') or self.qa_chain is None:
             try:
@@ -1194,7 +1328,21 @@ class PDFRAGApp:
         self.user_input.delete("1.0", tk.END)
         self.send_btn.config(state=tk.DISABLED)      
         Thread(target=self.get_answer, args=(user_text,), daemon=True).start()
-    
+
+    def process_source(self,result):
+        # 处理来源信息
+        print("show sources")
+        sources = []
+        for doc in result:
+            if hasattr(doc, 'metadata') and 'source' in doc.metadata:
+                source = f"[{os.path.basename(doc.metadata['source'])}]({doc.metadata['source']})\n"
+                if source not in sources:
+                    sources.append(source)
+        # 构建响应
+        if sources:
+            return f"\n\n来源: {', '.join(sources)}"
+        return ""
+
     def get_answer(self, question):
         try:
             if self.qa_chain is None:
@@ -1221,6 +1369,13 @@ class PDFRAGApp:
             # 调用 QA 链
             result = self.qa_chain({"query": enhanced_query})
             query_answer = result["result"]
+            answer_source =  self.process_source(result["source_documents"])
+
+            if not self.check_var.get():
+                self.update_conversation("AI",f"回答:{query_answer} {answer_source}")
+                return
+            
+
             # 构建对话问题
             question_parts = []
             # 添加RAG结果
@@ -1233,7 +1388,10 @@ class PDFRAGApp:
             print(conversation_summary)
             if conversation_summary:
                 print("add Hx")
-                question_parts.append(f"PS: Conversation history summary: {conversation_summary}")            
+                question_parts.append(f"PS: Conversation history summary: {conversation_summary}")
+            else:
+                self.update_conversation("AI",f"回答:{query_answer} {answer_source}")
+                return
             # 组合完整提问
             enhanced_question = "\n\n".join(question_parts) 
             
@@ -1251,20 +1409,8 @@ class PDFRAGApp:
                     model=self.model_var.get(),
                     temperature=self.temp_var.get()
                 ).generate(prompts=[messages]).generations[0][0].text
-                    # 处理来源信息
-                print("show sources")
-                sources = []
-                for doc in result["source_documents"]:
-                    if hasattr(doc, 'metadata') and 'source' in doc.metadata:
-                        source = f"[{os.path.basename(doc.metadata['source'])}]({doc.metadata['source']})\n"
-                        if source not in sources:
-                            sources.append(source)
-                # 构建响应
-                response = f"回答: {answer}"
-                if sources:
-                    response += f"\n\n来源: {', '.join(sources)}"
 
-                self.update_conversation("AI", response)                 
+                self.update_conversation("AI", f"回答: {answer} {answer_source}")                 
                 
             except Exception as e:
                 print(f"生成总结时出错：{e}")
@@ -1278,7 +1424,7 @@ class PDFRAGApp:
     def update_model_list(self, event=None):
         mbackend = self.backend_dropdown.get() 
         self.ollama_models = self.get_available_models(mbackend)
-        self.message_queue.put("模型","self.ollama_models")
+        self.message_queue.put(("模型","self.ollama_models"))
         print (self.ollama_models)
         # 更新模型列表
         self.model_dropdown['values'] = self.ollama_models
@@ -1317,7 +1463,7 @@ class PDFRAGApp:
         self.backend_dropdown = ttk.Combobox(
             backend_frame,
             textvariable=self.backend_var,
-            values=["ollama", "lmstudio"]#, "openai"],
+            values=["ollama", "lmstudio"],# "openai"],
             state="readonly"
         )
         self.backend_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
@@ -1491,130 +1637,7 @@ class PDFRAGApp:
         except:
             return ["llama2"]
     
-    def import_pdfs(self):
-        folder = self.pdf_folder_var.get()
-        if not folder:
-            self.update_status("请先选择PDF文件夹")
-            return
-        
-        # 清空列表
-        self.pdf_paths = []
-        self.pdf_list.delete(0, tk.END)
-        self.success_files = []
-        self.failed_files = {}
-        
-        # 禁用按钮防止重复点击
-        self.import_btn.config(state=tk.DISABLED)
-        self.browse_btn.config(state=tk.DISABLED)
-        self.update_status("正在扫描PDF文件...")
-        
-        # 在新线程中处理PDF
-        Thread(target=self.process_pdfs, args=(folder,), daemon=True).start()
-    
-    def record_pdf_hashes(self):
-        with open(self.hash_db_path, 'w') as f:
-            json.dump(self.file_hashes, f)
-    
-    def process_pdfs(self, folder):
-        try:
-            # 递归扫描所有PDF文件
-            for root, _, files in os.walk(folder):
-                for file in files:
-                    if file.lower().endswith('.pdf'):
-                        full_path = os.path.join(root, file)
-                        if full_path not in self.pdf_paths:
-                            self.pdf_paths.append(full_path)
-                            self.pdf_list.insert(tk.END, file)
-                            self.file_hashes[full_path] = self.calculate_file_hash(full_path)
-            
-            if not self.pdf_paths:
-                self.message_queue.put(("status", "未找到PDF文件"))
-                return
-            
-            self.message_queue.put(("message", f"找到 {len(self.pdf_paths)} 个PDF文件，正在处理..."))
-            
-            
-            # 分割文本
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200,
-                separators=["\n\n", "\n", " ", ""]
-            )
-            
-                
-                
-            # 读取和分割PDF文本
-            documents = []
-           # print(f"[调试] 开始处理 {len(self.pdf_paths)} 个PDF文件")  # 调试语句
-            for pdf_path in self.pdf_paths:
-                print(f"\n 正在处理: {os.path.basename(pdf_path)}:{pdf_path}")  # 显示当前文件名
-                try:
-                    reader = PdfReader(pdf_path)
-                    file_doc = []
-                   # print(f"[调试] 总页数: {len(reader.pages)}")  # 显示PDF页数
-                    for page_num, page in enumerate(reader.pages):
-                        text = page.extract_text()
-                        if text:
-                            file_doc.append(Document(
-                                page_content=text,
-                                metadata={"source": pdf_path, "page": page_num}
-                            ))
-                           # file_doc.append(text)
-                    if file_doc:
-                        split_docs = text_splitter.split_documents(file_doc)
-                        if not split_docs:
-                            self.message_queue.put(("error", "文件分割后无有效内容"))
-                            return
-                        documents.extend(split_docs)
-                        self.success_files.append(pdf_path)
-                        print("成功！")
-                    else:
-                        self.failed_files[pdf_path] = "无法提取文本内容"
-                except PdfReadError as e:
-                    self.failed_files[pdf_path] = "PDF文件损坏或加密"
-                except Exception as e:
-                    self.failed_files[pdf_path] = str(e)
-                    print(f"处理{os.path.basename(pdf_path)}出错: {str(e)}")
-
-            
-            # 在对话中显示处理结果
-            if self.success_files:
-                self.message_queue.put("status", f"成功导入 {len(self.success_files)} 个PDF文件")
-            if self.failed_files:
-                self.message_queue.put("status", f"导入失败 {len(self.failed_files)} 个PDF文件")
-                for file, reason in self.failed_files.items():
-                    self.message_queue.put("status", f"失败文件: {os.path.basename(file)} - 原因: {reason}")
-            print("创建向量存储")
-            # 创建向量存储
-            try:
-                embeddings = HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-mpnet-base-v2",
-                    model_kwargs={'device': self.get_device()},
-                    encode_kwargs={
-                        'batch_size': 32,
-                        'device': self.get_device(),
-                        'normalize_embeddings': True
-                    }
-                )
-                
-                # self.vectorstore = FAISS.from_texts(chunks, embeddings)
-                self.vectorstore = FAISS.from_documents(documents, embeddings)
-                self.save_vectorstore(self.vectorstore_path)
-                self.record_pdf_hashes()
-                success_msg = f"完成! 成功导入 {len(self.success_files)}/{len(self.pdf_paths)} 个PDF文件"
-                self.message_queue.put(("status", success_msg))
-                self.message_queue.put(("message", "系统", "RAG系统已准备好回答关于PDF内容的问题"))
-                
-            except Exception as e:
-                error_msg = f"创建向量存储或QA链时出错: {str(e)}"
-                self.message_queue.put(("error", error_msg))
-                
-        except Exception as e:
-            error_msg = f"处理PDF时出错: {str(e)}"
-            self.message_queue.put(("error", error_msg))
-        finally:
-            self.message_queue.put(("enable_buttons", True))
-    
+   
     
     def save_vectorstore(self, path="vectorstore"):
         print("保存向量数据库..."+path)
@@ -1676,7 +1699,7 @@ class PDFRAGApp:
         self.conversation.delete(1.0, tk.END)
         self.conversation.config(state='disabled')
         self.conversation_history = []
-        self.message_queue.put("系统", "对话历史已清空")
+        self.message_queue.put(("系统", "对话历史已清空"))
 
     def update_system_ready_message(self):
         """更新系统就绪消息"""
@@ -1693,7 +1716,7 @@ class PDFRAGApp:
             f"已加载PDF文档: **{pdf_count}**个\n"
             f"最后更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
-        self.message_queue.put("系统", message)
+        self.message_queue.put(("系统", message))
         self.send_btn.config(state=tk.NORMAL)  # 添加这行
 
 
@@ -1712,9 +1735,9 @@ class PDFRAGApp:
         try:
             with open(self.settings_path, 'w') as f:
                 json.dump(settings, f)
-            self.message_queue.put("系统", "设置已保存")
+            self.message_queue.put(("系统", "设置已保存"))
         except Exception as e:
-            self.message_queue.put("系统", f"保存设置失败: {str(e)}")
+            self.message_queue.put(("系统", f"保存设置失败: {str(e)}"))
 
     def load_settings(self):
         """加载保存的设置"""
@@ -1731,7 +1754,7 @@ class PDFRAGApp:
                 self.temp_var.set(settings.get("temperature", 0.7))
                 self.max_tokens_var.set(settings.get("max_tokens", 2000))
                 self.pdf_folder_var.set(settings.get("last_pdf_folder", ""))
-                self.prompt_input.set(settings.get("prompt", self.default_prompt))
+                self.prompt_input.setvar(settings.get("prompt", self.default_prompt))
                 print("设置加载成功！")
                 return True
         except Exception as e:
@@ -1750,7 +1773,7 @@ class PDFRAGApp:
         if folder:
             self.import_pdfs()
         else:
-            self.message_queue.put("系统", "请先选择PDF文件夹")
+            self.message_queue.put(("系统", "请先选择PDF文件夹"))
 
     def update_conversation(self, sender, message):
         """更新对话显示，支持Markdown格式和超链接"""
