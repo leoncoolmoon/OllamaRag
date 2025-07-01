@@ -1,58 +1,120 @@
 @echo off
-REM è®¾ç½®Pythonç‰ˆæœ¬å˜é‡
-set "PYTHON_VERSION=3.10"
-set "PYTHON_EXE=python%PYTHON_VERSION%"
+chcp 936 >nul
+REM ÇĞ»»µ½ GBK ±àÂë£¨ÖĞÎÄ Windows Ä¬ÈÏ£©
 
-REM æ£€æŸ¥æŒ‡å®šçš„Pythonç‰ˆæœ¬æ˜¯å¦å¯ç”¨
-where %PYTHON_EXE% >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-        echo é”™è¯¯ï¼šæœªæ‰¾åˆ° Python %PYTHON_VERSION%
-            echo.
-                echo è¯·æ‰§è¡Œä»¥ä¸‹æ“ä½œä¹‹ä¸€ï¼š
-                    echo 1. ä» Python å®˜ç½‘(https://www.python.org/downloads/)ä¸‹è½½å¹¶å®‰è£… Python %PYTHON_VERSION%
-                        echo 2. æˆ–è€…ä¿®æ”¹æœ¬è„šæœ¬ä¸­çš„ PYTHON_VERSION å˜é‡ä¸ºå·²å®‰è£…çš„ Python ç‰ˆæœ¬
-                            echo.
-                                pause
-                                    exit /b 1
+REM Ê×ÏÈ¼ì²éÊÇ·ñÒÑ´æÔÚĞéÄâ»·¾³
+if exist ".venv_rag\Scripts\activate.bat" (
+    call .venv_rag\Scripts\activate.bat
+    echo ÒÑ¼¤»îÏÖÓĞĞéÄâ»·¾³
+    goto AFTER_VENV
 )
 
-REM æ¿€æ´»è™šæ‹Ÿç¯å¢ƒ
-if exist ".venv_rag\Scripts\activate.bat" (
-        call .venv_rag\Scripts\activate.bat) else (
-                echo è™šæ‹Ÿç¯å¢ƒ .venv_rag ä¸å­˜åœ¨ï¼Œæ­£åœ¨ä½¿ç”¨ Python %PYTHON_VERSION% åˆ›å»º...
-                    %PYTHON_EXE% -m venv .venv_rag    call .venv_rag\Scripts\activate.bat)
+REM ===== Ö»ÓĞĞèÒª´´½¨ĞéÄâ»·¾³Ê±²Å¼ì²éPython°æ±¾ =====
+REM ÉèÖÃÔÊĞíµÄ Python °æ±¾·¶Î§£¨3.10 ~ 3.12£©
+set "PYTHON_MIN_MAJOR=3"
+set "PYTHON_MIN_MINOR=10"
+set "PYTHON_MAX_MAJOR=3"
+set "PYTHON_MAX_MINOR=12"
 
-                    REM æ£€æŸ¥å¹¶å®‰è£…requirements.txtä¸­çš„ä¾èµ–
-                    if exist "requirements.txt" (
-                            echo æ­£åœ¨æ£€æŸ¥å¹¶å®‰è£…ä¾èµ–åº“...
-                                pip install --upgrade pip    pip install -r requirements.txt) else (
-                                        echo æœªæ‰¾åˆ° requirements.txt æ–‡ä»¶
-                                )
+echo ÕıÔÚ¼ì²éÏµÍ³Python°æ±¾ÊÇ·ñ·ûºÏÒªÇó(3.10-3.12)...
 
-                                REM æŸ¥æ‰¾æ‰€æœ‰ RAGv*.py è„šæœ¬ï¼Œæå–æ•°å­—å¹¶æ‰¾å‡ºæœ€å¤§çš„ä¸€ä¸ª
-                                setlocal enabledelayedexpansionset "max=0"
-                                for %%f in (RAGv*.py) do (
-                                        set "name=%%~nf"
-                                            REM æå–æ•°å­—éƒ¨åˆ†
-                                                for /f "tokens=2 delims=v" %%a in ("!name!") do (
-                                                            set "num=%%a"
-                                                                    REM å»é™¤å¯èƒ½çš„éæ•°å­—åç¼€
-                                                                            for /f "delims=.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" %%b in ("!num!") do (
-                                                                                            if %%b gtr !max! set "max=%%b"
-                                                                            )
-                                                )
-                                )
+REM ¼ì²éÄ¬ÈÏPython°æ±¾ÊÇ·ñ·ûºÏÒªÇó
+set "PYTHON_EXE="
+set "PYTHON_VERSION="
 
-                                REM æ„é€ æœ€å¤§ç‰ˆæœ¬å·çš„è„šæœ¬åå¹¶è¿è¡Œ
-                                if not "!max!"=="0" (
-                                        set "script=RAGv!max!.py"
-                                            echo Running !script!...
-                                                python "!script!"
-                                ) else (
-                                        echo æœªæ‰¾åˆ°ç¬¦åˆæ¡ä»¶çš„è„šæœ¬
-                                            if exist "RAG.py" (
-                                                        python RAG.py    ) else (
-                                                                    echo æœªæ‰¾åˆ° RAG.py è„šæœ¬ï¼Œæå–æ•°å­—å¹¶æ‰¾å‡ºæœ€å¤§çš„ä¸€ä¸ª        pause    )
-                                )
-                                endlocal
-                                  
+REM »ñÈ¡Ä¬ÈÏPython°æ±¾
+for /f "tokens=1,2 delims=." %%a in ('python --version 2^>^&1 ^| findstr /r /i "^Python [0-9][0-9]*\.[0-9][0-9]*"') do (
+    for /f %%m in ("%%a") do set "MAJOR=%%m"
+    set "MINOR=%%b"
+    
+    REM ¼ì²éÊÇ·ñ Python 3.10 ~ 3.12
+    if "!MAJOR!"=="3" (
+        if !MINOR! GEQ %PYTHON_MIN_MINOR% (
+            if !MINOR! LEQ %PYTHON_MAX_MINOR% (
+                set "PYTHON_EXE=python"
+                set "PYTHON_VERSION=3.!MINOR!"
+            )
+        )
+    )
+)
+
+REM Èç¹ûÄ¬ÈÏPython²»·ûºÏÒªÇó£¬ÔòËÑË÷ÆäËûPython°æ±¾
+if not defined PYTHON_EXE (
+    set "LATEST_MINOR=0"
+    for /f "tokens=*" %%p in ('where python 2^>nul') do (
+        for /f "tokens=1,2 delims=." %%a in ('%%p --version 2^>^&1 ^| findstr /r /i "^Python [0-9][0-9]*\.[0-9][0-9]*"') do (
+            for /f %%m in ("%%a") do set "MAJOR=%%m"
+            set "MINOR=%%b"
+
+            if "!MAJOR!"=="3" (
+                if !MINOR! GEQ %PYTHON_MIN_MINOR% (
+                    if !MINOR! LEQ %PYTHON_MAX_MINOR% (
+                        if !MINOR! GTR !LATEST_MINOR! (
+                            set "LATEST_MINOR=!MINOR!"
+                            set "PYTHON_EXE=%%p"
+                            set "PYTHON_VERSION=3.!MINOR!"
+                        )
+                    )
+                )
+            )
+        )
+    )
+)
+
+REM ¼ì²éÊÇ·ñÕÒµ½·ûºÏÒªÇóµÄ Python
+if not defined PYTHON_EXE (
+    echo ´íÎó£ºÎ´ÕÒµ½ Python 3.10 ~ 3.12 °æ±¾
+    echo.
+    echo µ±Ç°ÏµÍ³Python°æ±¾: 
+    python --version 2>&1
+    echo.
+    echo ÇëÖ´ĞĞÒÔÏÂ²Ù×÷Ö®Ò»£º
+    echo 1. ´Ó Python ¹ÙÍø ^(https://www.python.org/downloads/ ^)ÏÂÔØ²¢°²×° Python 3.10 ~ 3.12
+    echo 2. »òÕßĞŞ¸Ä±¾½Å±¾ÖĞµÄ PYTHON_MIN_MINOR ºÍ PYTHON_MAX_MINOR ±äÁ¿
+    echo.
+    pause
+    exit /b 1
+)
+
+echo ÕıÔÚÊ¹ÓÃ Python !PYTHON_VERSION! ´´½¨ĞéÄâ»·¾³...
+%PYTHON_EXE% -m venv .venv_rag
+call .venv_rag\Scripts\activate.bat
+
+:AFTER_VENV
+REM ´ÓÕâÀï¿ªÊ¼£¬ËùÓĞ²Ù×÷¶¼ÔÚĞéÄâ»·¾³ÖĞ½øĞĞ
+
+REM ¼ì²é²¢°²×°requirements.txtÖĞµÄÒÀÀµ
+if exist "requirements.txt" (
+    echo ÕıÔÚ¼ì²é²¢°²×°ÒÀÀµ¿â...
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements.txt
+) else (
+    echo Î´ÕÒµ½ requirements.txt ÎÄ¼ş
+)
+
+REM ²éÕÒ²¢ÔËĞĞ×îĞÂ°æ±¾µÄRAG½Å±¾
+setlocal enabledelayedexpansion
+set "max=0"
+for %%f in (RAGv*.py) do (
+    set "name=%%~nf"
+    for /f "tokens=2 delims=v" %%a in ("!name!") do (
+        set "num=%%a"
+        for /f "delims=.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" %%b in ("!num!") do (
+            if %%b gtr !max! set "max=%%b"
+        )
+    )
+)
+
+if not "!max!"=="0" (
+    set "script=RAGv!max!.py"
+    echo ÕıÔÚÔËĞĞ !script!...
+    python "!script!"
+) else (
+    if exist "RAG.py" (
+        python RAG.py
+    ) else (
+        echo Î´ÕÒµ½ RAG ½Å±¾
+        pause
+    )
+)
+endlocal
