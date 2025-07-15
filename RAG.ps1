@@ -1,6 +1,36 @@
 # PowerShell equivalent of the batch script
 # Encoding is UTF-8 by default in PowerShell, no need for chcp
 
+param(
+    [switch]$l,
+    [switch]$local,
+    [string]$h,
+    [string]$help
+)
+
+# Show help information
+function ShowHelp {
+    Write-Host "RAG 启动脚本使用说明"
+    Write-Host ""
+    Write-Host "用法: .\RAG.ps1 [选项]"
+    Write-Host ""
+    Write-Host "选项:"
+    Write-Host "  -l, --local     启用本地模式"
+    Write-Host "  -h, --help      显示此帮助信息"
+    Write-Host ""
+    Write-Host "示例:"
+    Write-Host "  .\RAG.ps1              # 常规启动"
+    Write-Host "  .\RAG.ps1 -l           # 本地模式启动"
+    Write-Host "  .\RAG.ps1 --local      # 本地模式启动"
+    Write-Host ""
+}
+
+# Check if help is requested
+if ($h -or $help) {
+    ShowHelp
+    exit 0
+}
+
 function CheckPythonVersion {
     param(
         [int]$minMajor = 3,
@@ -61,6 +91,19 @@ function CheckPythonVersion {
 }
 
 # Main script execution
+Write-Host "RAG 启动脚本"
+Write-Host "============"
+
+# Check for local mode
+$isLocalMode = $l -or $local
+if ($isLocalMode) {
+    Write-Host "正在以本地模式启动..."
+    $env:RAG_LOCAL_MODE = "true"
+} else {
+    Write-Host "正在以标准模式启动..."
+    $env:RAG_LOCAL_MODE = "false"
+}
+
 if (Test-Path ".venv_rag\Scripts\Activate.ps1") {
     & .venv_rag\Scripts\Activate.ps1
     Write-Host "已激活现有虚拟环境"
@@ -96,11 +139,26 @@ Get-ChildItem -Filter "RAGv*.py" | ForEach-Object {
     }
 }
 
+# Prepare arguments for Python script
+$pythonArgs = @()
+if ($isLocalMode) {
+    $pythonArgs += "--local"
+}
+
 if ($maxVersion -gt 0) {
     Write-Host "正在运行 $($scriptToRun)..."
-    & python $scriptToRun
+    if ($pythonArgs.Count -gt 0) {
+        & python $scriptToRun $pythonArgs
+    } else {
+        & python $scriptToRun
+    }
 } elseif (Test-Path "RAG.py") {
-    & python RAG.py
+    Write-Host "正在运行 RAG.py..."
+    if ($pythonArgs.Count -gt 0) {
+        & python RAG.py $pythonArgs
+    } else {
+        & python RAG.py
+    }
 } else {
     Write-Host "未找到 RAG 脚本"
     Pause

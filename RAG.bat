@@ -1,120 +1,184 @@
 @echo off
-chcp 936 >nul
-REM ÇĞ»»µ½ GBK ±àÂë£¨ÖĞÎÄ Windows Ä¬ÈÏ£©
+chcp 65001 > nul
+setlocal enabledelayedexpansion
 
-REM Ê×ÏÈ¼ì²éÊÇ·ñÒÑ´æÔÚĞéÄâ»·¾³
+:: è§£æå‘½ä»¤è¡Œå‚æ•°
+set "LOCAL_MODE=false"
+set "SHOW_HELP=false"
+
+:parse_args
+if "%~1"=="" goto :args_done
+if /i "%~1"=="-l" (
+    set "LOCAL_MODE=true"
+    shift
+    goto :parse_args
+)
+if /i "%~1"=="--local" (
+    set "LOCAL_MODE=true"
+    shift
+    goto :parse_args
+)
+if /i "%~1"=="-h" (
+    set "SHOW_HELP=true"
+    shift
+    goto :parse_args
+)
+if /i "%~1"=="--help" (
+    set "SHOW_HELP=true"
+    shift
+    goto :parse_args
+)
+echo é”™è¯¯: æœªçŸ¥å‚æ•° %~1
+goto :show_help
+shift
+goto :parse_args
+
+:args_done
+
+:: æ˜¾ç¤ºå¸®åŠ©ä¿¡æ¯
+if "%SHOW_HELP%"=="true" goto :show_help
+
+:: ä¸»ç¨‹åºå¼€å§‹
+echo RAG å¯åŠ¨è„šæœ¬
+echo ============
+
+:: æ£€æŸ¥æœ¬åœ°æ¨¡å¼
+if "%LOCAL_MODE%"=="true" (
+    echo æ­£åœ¨ä»¥æœ¬åœ°æ¨¡å¼å¯åŠ¨...
+    set "RAG_LOCAL_MODE=true"
+) else (
+    echo æ­£åœ¨ä»¥æ ‡å‡†æ¨¡å¼å¯åŠ¨...
+    set "RAG_LOCAL_MODE=false"
+)
+
+:: æ£€æŸ¥æ˜¯å¦å­˜åœ¨è™šæ‹Ÿç¯å¢ƒ
 if exist ".venv_rag\Scripts\activate.bat" (
     call .venv_rag\Scripts\activate.bat
-    echo ÒÑ¼¤»îÏÖÓĞĞéÄâ»·¾³
-    goto AFTER_VENV
+    echo å·²æ¿€æ´»ç°æœ‰è™šæ‹Ÿç¯å¢ƒ
+) else (
+    call :check_python_version
+    if !errorlevel! neq 0 exit /b 1
+    echo æ­£åœ¨ä½¿ç”¨ Python !PYTHON_VERSION! åˆ›å»ºè™šæ‹Ÿç¯å¢ƒ...
+    "!PYTHON_EXE!" -m venv .venv_rag
+    call .venv_rag\Scripts\activate.bat
 )
 
-REM ===== Ö»ÓĞĞèÒª´´½¨ĞéÄâ»·¾³Ê±²Å¼ì²éPython°æ±¾ =====
-REM ÉèÖÃÔÊĞíµÄ Python °æ±¾·¶Î§£¨3.10 ~ 3.12£©
-set "PYTHON_MIN_MAJOR=3"
-set "PYTHON_MIN_MINOR=10"
-set "PYTHON_MAX_MAJOR=3"
-set "PYTHON_MAX_MINOR=12"
+:: æ£€æŸ¥å¹¶å®‰è£…ä¾èµ–
+if exist "requirements.txt" (
+    echo æ­£åœ¨æ£€æŸ¥å¹¶å®‰è£…ä¾èµ–åº“...
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements.txt
+) else (
+    echo æœªæ‰¾åˆ° requirements.txt æ–‡ä»¶
+)
 
-echo ÕıÔÚ¼ì²éÏµÍ³Python°æ±¾ÊÇ·ñ·ûºÏÒªÇó(3.10-3.12)...
+:: æŸ¥æ‰¾å¹¶è¿è¡Œæœ€æ–°ç‰ˆæœ¬çš„RAGè„šæœ¬
+set "MAX_VERSION=0"
+set "SCRIPT_TO_RUN="
 
-REM ¼ì²éÄ¬ÈÏPython°æ±¾ÊÇ·ñ·ûºÏÒªÇó
+for %%f in (RAGv*.py) do (
+    set "filename=%%f"
+    for /f "tokens=1 delims=." %%a in ("!filename!") do (
+        set "basename=%%a"
+        set "version_part=!basename:~4!"
+        if "!version_part!" gtr "!MAX_VERSION!" (
+            set "MAX_VERSION=!version_part!"
+            set "SCRIPT_TO_RUN=%%f"
+        )
+    )
+)
+
+:: å‡†å¤‡Pythonè„šæœ¬å‚æ•°
+set "PYTHON_ARGS="
+if "%LOCAL_MODE%"=="true" (
+    set "PYTHON_ARGS=--local"
+)
+
+:: è¿è¡Œè„šæœ¬
+if !MAX_VERSION! gtr 0 (
+    echo æ­£åœ¨è¿è¡Œ !SCRIPT_TO_RUN!...
+    if defined PYTHON_ARGS (
+        python "!SCRIPT_TO_RUN!" !PYTHON_ARGS!
+    ) else (
+        python "!SCRIPT_TO_RUN!"
+    )
+) else if exist "RAG.py" (
+    echo æ­£åœ¨è¿è¡Œ RAG.py...
+    if defined PYTHON_ARGS (
+        python RAG.py !PYTHON_ARGS!
+    ) else (
+        python RAG.py
+    )
+) else (
+    echo æœªæ‰¾åˆ° RAG è„šæœ¬
+    pause
+)
+
+goto :eof
+
+:check_python_version
+echo æ­£åœ¨æ£€æŸ¥ç³»ç»ŸPythonç‰ˆæœ¬æ˜¯å¦ç¬¦åˆè¦æ±‚(3.10-3.12)...
+
 set "PYTHON_EXE="
 set "PYTHON_VERSION="
+set "LATEST_MINOR=0"
 
-REM »ñÈ¡Ä¬ÈÏPython°æ±¾
-for /f "tokens=1,2 delims=." %%a in ('python --version 2^>^&1 ^| findstr /r /i "^Python [0-9][0-9]*\.[0-9][0-9]*"') do (
-    for /f %%m in ("%%a") do set "MAJOR=%%m"
-    set "MINOR=%%b"
-    
-    REM ¼ì²éÊÇ·ñ Python 3.10 ~ 3.12
-    if "!MAJOR!"=="3" (
-        if !MINOR! GEQ %PYTHON_MIN_MINOR% (
-            if !MINOR! LEQ %PYTHON_MAX_MINOR% (
-                set "PYTHON_EXE=python"
-                set "PYTHON_VERSION=3.!MINOR!"
-            )
-        )
-    )
+:: æ£€æŸ¥pythonå‘½ä»¤
+for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do (
+    call :parse_version "%%v"
 )
 
-REM Èç¹ûÄ¬ÈÏPython²»·ûºÏÒªÇó£¬ÔòËÑË÷ÆäËûPython°æ±¾
-if not defined PYTHON_EXE (
-    set "LATEST_MINOR=0"
-    for /f "tokens=*" %%p in ('where python 2^>nul') do (
-        for /f "tokens=1,2 delims=." %%a in ('%%p --version 2^>^&1 ^| findstr /r /i "^Python [0-9][0-9]*\.[0-9][0-9]*"') do (
-            for /f %%m in ("%%a") do set "MAJOR=%%m"
-            set "MINOR=%%b"
-
-            if "!MAJOR!"=="3" (
-                if !MINOR! GEQ %PYTHON_MIN_MINOR% (
-                    if !MINOR! LEQ %PYTHON_MAX_MINOR% (
-                        if !MINOR! GTR !LATEST_MINOR! (
-                            set "LATEST_MINOR=!MINOR!"
-                            set "PYTHON_EXE=%%p"
-                            set "PYTHON_VERSION=3.!MINOR!"
-                        )
-                    )
-                )
-            )
-        )
-    )
+:: æ£€æŸ¥python3å‘½ä»¤
+for /f "tokens=2 delims= " %%v in ('python3 --version 2^>^&1') do (
+    call :parse_version "%%v"
 )
 
-REM ¼ì²éÊÇ·ñÕÒµ½·ûºÏÒªÇóµÄ Python
 if not defined PYTHON_EXE (
-    echo ´íÎó£ºÎ´ÕÒµ½ Python 3.10 ~ 3.12 °æ±¾
+    echo é”™è¯¯ï¼šæœªæ‰¾åˆ° Python 3.10 ~ 3.12 ç‰ˆæœ¬
     echo.
-    echo µ±Ç°ÏµÍ³Python°æ±¾: 
-    python --version 2>&1
+    echo å½“å‰ç³»ç»ŸPythonç‰ˆæœ¬:
+    python --version 2>nul || echo æœªæ‰¾åˆ°Python
     echo.
-    echo ÇëÖ´ĞĞÒÔÏÂ²Ù×÷Ö®Ò»£º
-    echo 1. ´Ó Python ¹ÙÍø ^(https://www.python.org/downloads/ ^)ÏÂÔØ²¢°²×° Python 3.10 ~ 3.12
-    echo 2. »òÕßĞŞ¸Ä±¾½Å±¾ÖĞµÄ PYTHON_MIN_MINOR ºÍ PYTHON_MAX_MINOR ±äÁ¿
+    echo è¯·æ‰§è¡Œä»¥ä¸‹æ“ä½œä¹‹ä¸€ï¼š
+    echo 1. ä» Python å®˜ç½‘ ^(https://www.python.org/downloads/^) ä¸‹è½½å¹¶å®‰è£… Python 3.10 ~ 3.12
+    echo 2. æˆ–è€…ä¿®æ”¹æœ¬è„šæœ¬ä¸­çš„ç‰ˆæœ¬æ£€æŸ¥é€»è¾‘
     echo.
     pause
     exit /b 1
 )
 
-echo ÕıÔÚÊ¹ÓÃ Python !PYTHON_VERSION! ´´½¨ĞéÄâ»·¾³...
-%PYTHON_EXE% -m venv .venv_rag
-call .venv_rag\Scripts\activate.bat
+exit /b 0
 
-:AFTER_VENV
-REM ´ÓÕâÀï¿ªÊ¼£¬ËùÓĞ²Ù×÷¶¼ÔÚĞéÄâ»·¾³ÖĞ½øĞĞ
-
-REM ¼ì²é²¢°²×°requirements.txtÖĞµÄÒÀÀµ
-if exist "requirements.txt" (
-    echo ÕıÔÚ¼ì²é²¢°²×°ÒÀÀµ¿â...
-    python -m pip install --upgrade pip
-    python -m pip install -r requirements.txt
-) else (
-    echo Î´ÕÒµ½ requirements.txt ÎÄ¼ş
+:parse_version
+set "version_str=%~1"
+for /f "tokens=1,2 delims=." %%a in ("%version_str%") do (
+    set "major=%%a"
+    set "minor=%%b"
 )
 
-REM ²éÕÒ²¢ÔËĞĞ×îĞÂ°æ±¾µÄRAG½Å±¾
-setlocal enabledelayedexpansion
-set "max=0"
-for %%f in (RAGv*.py) do (
-    set "name=%%~nf"
-    for /f "tokens=2 delims=v" %%a in ("!name!") do (
-        set "num=%%a"
-        for /f "delims=.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" %%b in ("!num!") do (
-            if %%b gtr !max! set "max=%%b"
+if "%major%"=="3" (
+    if %minor% geq 10 if %minor% leq 12 (
+        if %minor% gtr %LATEST_MINOR% (
+            set "LATEST_MINOR=%minor%"
+            set "PYTHON_EXE=python"
+            set "PYTHON_VERSION=%major%.%minor%"
         )
     )
 )
+exit /b 0
 
-if not "!max!"=="0" (
-    set "script=RAGv!max!.py"
-    echo ÕıÔÚÔËĞĞ !script!...
-    python "!script!"
-) else (
-    if exist "RAG.py" (
-        python RAG.py
-    ) else (
-        echo Î´ÕÒµ½ RAG ½Å±¾
-        pause
-    )
-)
-endlocal
+:show_help
+echo RAG å¯åŠ¨è„šæœ¬ä½¿ç”¨è¯´æ˜
+echo.
+echo ç”¨æ³•: RAG.bat [é€‰é¡¹]
+echo.
+echo é€‰é¡¹:
+echo   -l, --local     å¯ç”¨æœ¬åœ°æ¨¡å¼
+echo   -h, --help      æ˜¾ç¤ºæ­¤å¸®åŠ©ä¿¡æ¯
+echo.
+echo ç¤ºä¾‹:
+echo   RAG.bat              # å¸¸è§„å¯åŠ¨
+echo   RAG.bat -l           # æœ¬åœ°æ¨¡å¼å¯åŠ¨
+echo   RAG.bat --local      # æœ¬åœ°æ¨¡å¼å¯åŠ¨
+echo.
+exit /b 0
