@@ -72,20 +72,32 @@ class ChatUI:
     def create_ui(self):
         """创建整体UI布局"""
         with ui.header().style("background-color: #3874c8; color: white; padding: 10px"):
-            with ui.row().classes("w-full justify-between items-center"):
-                ui.label().bind_text(self, "status_var")
-                ui.label().bind_text(self, "model_info_var")
+            with ui.row().classes("w-full justify-between items-center flex-wrap"):
+                ui.label().bind_text(self, "status_var").classes("truncate") 
+                ui.label().bind_text(self, "model_info_var").classes("truncate hidden sm:block")
+                self.menu_btn = ui.button(icon="menu", on_click=self.toggle_sidebar).classes("menu-btn ml-auto")
         with ui.row().classes("w-full h-full"):    
-            with ui.column().classes("w-7/12 h-full"):  # 全屏高度的竖排布局
+            with ui.column().classes("main-conv h-full"):  # 全屏高度的竖排布局
                 with ui.row().classes("w-full h-full"):
                     with ui.row().classes("w-full h-[65vh] p-4"):
                         # 对话区域
                         with ui.scroll_area().classes("w-full h-full overflow-auto").props('id="chat_scroll"'):
                             self.conversation = ui.column().classes("w-full space-y-2").props('id="conversation"')
-                        with ui.row().classes("w-full items-center"):
-                            ui.checkbox("包含之前对话内容").bind_value(self, "check_var")
-                            ui.checkbox("仅对话不搜索").bind_value(self, "conv_var")
-                            ui.button("清空对话", on_click=self.clear_conversation)
+                        with ui.row().classes("w-full items-center flex-nowrap overflow-hidden"):  # 关键类
+                            # 复选框1（允许收缩）
+                            ui.checkbox("包含之前对话内容").bind_value(self, "check_var").classes(
+                                "shrink min-w-0 truncate"  # 关键
+                            )
+                            
+                            # 复选框2（允许收缩）
+                            ui.checkbox("仅对话不搜索").bind_value(self, "conv_var").classes(
+                                "shrink min-w-0 truncate"  # 关键
+                            )
+                            
+                            # 按钮（禁止收缩，保持最小宽度）
+                            ui.button("清空对话", on_click=self.clear_conversation).classes(
+                                "shrink-0 min-w-[80px]"  # 保持最小宽度
+                            )
                     # 底部输入区域
                     with ui.row().classes("w-full h-[15vh] "):
                         with ui.row().classes("w-full items-center h-full p-4"):
@@ -93,8 +105,10 @@ class ChatUI:
                             self.user_input.on('keydown', self.handle_keydown)
                             self.send_btn=ui.button("发送", on_click=self.send_message).classes("w-24 h-12 justify-right")
             # 右侧控制区域
-            with ui.column().classes("w-4/12 h-full p-4"):
+            with ui.column().classes("sidebar h-[95%] p-4")  as self.sidebar:
                 self._create_pdf_notebook()
+            self._inject_responsive_code()
+
 
     def _create_pdf_notebook(self):
         """创建PDF管理标签页"""
@@ -104,32 +118,30 @@ class ChatUI:
             prompt_tab = ui.tab("系统提示词")
             system_info_tab = ui.tab("系统信息")
         
-        with ui.tab_panels(tabs, value=pdf_manage).classes("w-full h-full"):
+        with ui.tab_panels(tabs, value=pdf_manage).classes("w-full h-[95%] overflow-y-auto"):
             # PDF文件管理标签页
-            with ui.tab_panel(pdf_manage).classes("w-full h-full flex flex-col"):
-                # 上传区域
-                with ui.column().classes("w-full h-[20%]"):
+            with ui.tab_panel(pdf_manage).classes("filetab w-full h-[95%] flex flex-col min-h-0 overflow-y-auto"):
+                # 上传区域（高度占比20%）
+                with ui.row().classes("w-full flex-[2] min-h-0"):  # 比例2份
                     self.add_btn = ui.upload(
-                            on_upload=self.handle_upload,
-                            on_multi_upload=self.handle_uploads,
-                            multiple=True,
-                            max_file_size=50_000_000,
-                            max_files=10
-                        ).props('accept="*"').classes("w-full h-full")
+                        on_upload=self.handle_upload,
+                        on_multi_upload=self.handle_uploads,
+                        multiple=True,
+                        max_file_size=50_000_000,
+                        max_files=10
+                    ).props('accept="*"').classes("w-full h-full")
                 
-                #ui.separator().classes('my-2')
-                
-                # 按钮区域 - 固定在分隔线下方
-                with ui.row().classes("w-full justify-between mb-1"):
+                # 按钮区域（固定高度，比例1份）
+                with ui.row().classes("w-full flex-[1] justify-between items-center shrink-0"):  # 比例1份
                     ui.button("全选", on_click=self.select_all_pdfs).classes("px-4 py-0")
                     ui.button("取消选择", on_click=self.select_non_pdfs).classes("px-4 py-0")
                 
-                # 文件列表区域
-                with ui.column().classes("w-full h-full min-h-0"):
-                    ui.label('已上传文件').classes('text-sm mb-1')
-                    # 使用滚动容器包裹文件列表
-                    #with ui.scroll_area().classes('w-full h-[50vh] flex-grow overflow-y-auto overflow-x-hidden border rounded p-2'):
-                    self.pdf_list = ui.column().classes('w-full h-[50vh] flex-grow overflow-y-auto overflow-x-hidden border rounded p-2').props('id="pdf_list"')
+                # 文件列表区域（弹性填充剩余空间，比例6份）
+                with ui.row().classes("w-full flex-[5] min-h-0"):  # 比例7份
+                    ui.label('已上传文件').classes('text-sm mb-1 shrink-0')
+                    self.pdf_list = ui.column().classes(
+                        'w-full h-full overflow-y-auto'
+                    ).props('id="pdf_list"')
             
             # 模型设置标签页
             with ui.tab_panel(model_tab).classes("w-full h-full p-2"):
@@ -210,7 +222,48 @@ class ChatUI:
                         ui.button("重置所有设置", on_click=self.parent.load_settings).classes("px-8 py-3 bg-red-500 text-white ml-4")
 
 ########## gui service ##########
-    
+    def toggle_sidebar(self):
+        """通过JS直接切换侧边栏显示/隐藏"""
+        ui.run_javascript(f"""
+            const sidebar = document.querySelector('.sidebar');
+            sidebar.classList.toggle('hidden');
+        """)
+
+    def _inject_responsive_code(self):
+        """注入响应式CSS和JS"""
+        # 1. CSS媒体查询：窄屏时隐藏侧边栏，显示菜单按钮
+        ui.add_head_html('''
+        <style>
+            /* 默认样式（宽屏） */
+            .sidebar { display: flex; z-index:99; width: 33vw; position: relative;}
+            .menu-btn { display: none; }
+            .main-conv { width: 60vw; }
+            .filetab   { height: auto !important;}
+            /* 窄屏样式 */
+            @media (max-aspect-ratio:1) {
+                .header-compact { padding: 6px !important; }
+                .header-compact .status-label { font-size: 0.9rem; }
+                .sidebar { position: absolute; width: 95vw; }
+                .main-conv { width: 100vw;}
+                .menu-btn { display: inline-flex; }
+             }
+            /* 宽屏样式 */
+            @media (min-aspect-ratio:1) {
+                .menu-btn { display: none; }
+                .sidebar {
+                    display: flex !important;  /* 优先级最高 */
+                    position: relative;
+                    width: 33vw;
+                }
+                .main-conv { 
+                    width: 60vw;
+                }
+            }
+        </style>
+        ''')
+        
+       
+        
     def reset_prompt(self):
         """重置提示词到默认值"""
         self.prompt_input.value = self.parent.default_prompt
