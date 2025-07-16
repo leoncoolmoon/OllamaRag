@@ -3,8 +3,8 @@ langchain==0.3.26
 langchain_community==0.3.26
 langchain_core==0.3.67
 langchain_huggingface==0.3.0
-nicegui==2.20.0
+nicegui==2.19.0
 pydantic==2.11.7
-requests==2.32.4
+requests==2.32.3
 torch==2.7.1
 sentence-transformers==4.1.0
