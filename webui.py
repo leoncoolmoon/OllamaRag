@@ -59,7 +59,7 @@ class ChatUI:
         #self.process_messages()
         self.setup_routes()
         try:
-            ui.run(title="高级PDF RAG系统 v9", reload=False, port=8080, show=True)
+            ui.run(title="高级PDF RAG系统 v9", reload=False, port=8090, show=True)
         except Exception as e:
             print(e)
         finally:
@@ -269,13 +269,13 @@ class ChatUI:
         self.prompt_input.value = self.parent.default_prompt
 
     def handle_keydown(self,e):
-        if e.key == "Enter" and e.ctrl_key:  # 检查是否按下 Ctrl + Enter
+        if e.args["key"] == "Enter" and e.args["ctrlKey"]:  # 检查是否按下 Ctrl + Enter
             print("Ctrl + Enter pressed!")
             self.send_message()
 
     async def handle_uploads(self,e):#把指定文件夹一锅端，然后更新列表，如果里面有残留文件可能会有问题
         self.parent.process_pdfs(self.upload_path)
-        self.update_file_list()
+#        self.update_file_list()
 
     async def handle_upload(self,e):#写出上传的文件到指定文件夹
         # In current NiceGUI versions, the file content is available in e.content
@@ -364,10 +364,9 @@ class ChatUI:
                     if msg_type == "status":
                         self.update_status(content[0])
                     elif msg_type == "message":
-                        self.parent.message_queue.put(content[0], content[1])
+                        self.update_status(content[0])
                     elif msg_type == "error":
-                        self.parent.message_queue.put(("错误", content[0]))
-                        self.status_var=content[0]
+                        self.update_status(content[0])
                     elif msg_type == "enable_buttons":
                         self.send_btn.enable()
                         self.add_btn.enable()
